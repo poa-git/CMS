@@ -7,15 +7,15 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.crypto.password.NoOpPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.ForwardedHeaderFilter;
 
 import java.util.Arrays;
 
@@ -24,12 +24,20 @@ public class SecurityConfig {
 
     private final UserDetailsService userDetailsService;
 
-    // Comes from application.properties or environment variable
     @Value("${CORS_ALLOWED_ORIGINS}")
     private String corsAllowedOrigins;
 
     public SecurityConfig(UserDetailsService userDetailsService) {
         this.userDetailsService = userDetailsService;
+    }
+
+    /**
+     * This bean makes Spring respect X-Forwarded-Proto, X-Forwarded-Host, etc.
+     * headers sent by Railway's reverse proxy, so redirects use https:// instead of http://
+     */
+    @Bean
+    public ForwardedHeaderFilter forwardedHeaderFilter() {
+        return new ForwardedHeaderFilter();
     }
 
     /**
@@ -54,7 +62,10 @@ public class SecurityConfig {
                 // 2) Enable CORS
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
 
-                // 3) Configure authorization rules
+                // 3) Trust forwarded headers from Railway's proxy (fixes http -> https redirect issue)
+                .requestCache(cache -> cache.requestCache(new org.springframework.security.web.savedrequest.HttpSessionRequestCache()))
+
+                // 4) Configure authorization rules
                 .authorizeHttpRequests(auth -> auth
                         // Permit the main index and static resources
                         .requestMatchers("/", "/index.html", "/static/**").permitAll()
@@ -70,16 +81,16 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
-                // 4) Form Login config
+                // 5) Form Login config
                 .formLogin(form -> form
-                        .loginPage("/login")                  // The GET page for login
-                        .loginProcessingUrl("/perform_login") // The POST endpoint for credentials
+                        .loginPage("/login")
+                        .loginProcessingUrl("/perform_login")
                         .defaultSuccessUrl("/dashboard", true)
                         .failureUrl("/login?error=true")
                         .permitAll()
                 )
 
-                // 5) Logout config
+                // 6) Logout config
                 .logout(logout -> logout
                         .logoutUrl("/logout")
                         .logoutSuccessHandler((request, response, authentication) -> {
@@ -90,15 +101,12 @@ public class SecurityConfig {
                         .deleteCookies("JSESSIONID")
                 )
 
-                // 6) Session Management
+                // 7) Session Management
                 .sessionManagement(session -> session
                         .sessionFixation(sessionFixation -> sessionFixation.migrateSession())
                         .invalidSessionUrl("/login?session=expired")
                         .sessionConcurrency(concurrency -> concurrency
-                                // -1 allows unlimited concurrent sessions for the same user.
                                 .maximumSessions(-1)
-                                // If set to true, further logins beyond the max would be rejected.
-                                // If set to false, the oldest session will be invalidated to allow a new one.
                                 .maxSessionsPreventsLogin(false)
                         )
                 )
@@ -109,23 +117,19 @@ public class SecurityConfig {
         return http.build();
     }
 
-
-
     /**
      * Basic CORS configuration to allow your React app (or other front-ends) to talk to this API.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // Split your allowed origins from your application.properties
         configuration.setAllowedOrigins(Arrays.asList(corsAllowedOrigins.split(",")));
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS","PATCH"));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
-        configuration.setAllowCredentials(true); // crucial if you're sending session cookies
+        configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        // Apply it to all endpoints
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
