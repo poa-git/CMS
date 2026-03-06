@@ -123,7 +123,7 @@ function Dashboard() {
 
   const currentDate = new Date().toISOString().split("T")[0];
   const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
-
+  console.log(process.env.REACT_APP_API_BASE_URL);
   // Dashboard Count
   useEffect(() => {
     fetchDashboardCounts();
