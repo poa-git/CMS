@@ -9,11 +9,11 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.crypto.password.NoOpPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -28,16 +28,13 @@ public class SecurityConfig {
 
     private final UserDetailsService userDetailsService;
 
-    @Value("${CORS_ALLOWED_ORIGINS}")
+    @Value("${cors.allowed-origins}")
     private String corsAllowedOrigins;
 
     public SecurityConfig(UserDetailsService userDetailsService) {
         this.userDetailsService = userDetailsService;
     }
 
-    /**
-     * Respects X-Forwarded-Proto headers from Railway's reverse proxy.
-     */
     @Bean
     public ForwardedHeaderFilter forwardedHeaderFilter() {
         return new ForwardedHeaderFilter();
@@ -60,34 +57,47 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/static/**").permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/login").permitAll()
+                        .requestMatchers("/login", "/perform_login").permitAll()
                         .requestMatchers("/admin/**").hasAuthority("ADMIN")
                         .requestMatchers("/user/**").hasAnyAuthority("USER", "ADMIN")
                         .anyRequest().authenticated()
+                )
+
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setStatus(401);
+                            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+
+                            Map<String, String> result = new HashMap<>();
+                            result.put("status", "error");
+                            result.put("message", "Unauthorized");
+
+                            new ObjectMapper().writeValue(response.getWriter(), result);
+                        })
                 )
 
                 .formLogin(form -> form
                         .loginPage("/login")
                         .loginProcessingUrl("/perform_login")
                         .permitAll()
-
-                        // ✅ On success: return 200 JSON instead of 302 redirect
                         .successHandler((request, response, authentication) -> {
                             response.setStatus(200);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+
                             Map<String, String> result = new HashMap<>();
                             result.put("status", "success");
                             result.put("message", "Login successful");
+
                             new ObjectMapper().writeValue(response.getWriter(), result);
                         })
-
-                        // ✅ On failure: return 401 JSON instead of 302 redirect
                         .failureHandler((request, response, exception) -> {
                             response.setStatus(401);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+
                             Map<String, String> result = new HashMap<>();
                             result.put("status", "error");
                             result.put("message", "Invalid username or password");
+
                             new ObjectMapper().writeValue(response.getWriter(), result);
                         })
                 )
@@ -97,7 +107,7 @@ public class SecurityConfig {
                         .logoutSuccessHandler((request, response, authentication) -> {
                             response.setStatus(200);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                            response.getWriter().write("{\"message\": \"Logged out successfully\"}");
+                            response.getWriter().write("{\"message\":\"Logged out successfully\"}");
                         })
                         .invalidateHttpSession(true)
                         .deleteCookies("JSESSIONID")
@@ -105,7 +115,6 @@ public class SecurityConfig {
 
                 .sessionManagement(session -> session
                         .sessionFixation(sessionFixation -> sessionFixation.migrateSession())
-                        .invalidSessionUrl("/login?session=expired")
                         .sessionConcurrency(concurrency -> concurrency
                                 .maximumSessions(-1)
                                 .maxSessionsPreventsLogin(false)
@@ -120,7 +129,13 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList(corsAllowedOrigins.split(",")));
+
+        configuration.setAllowedOrigins(
+                Arrays.stream(corsAllowedOrigins.split(","))
+                        .map(String::trim)
+                        .toList()
+        );
+
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);
