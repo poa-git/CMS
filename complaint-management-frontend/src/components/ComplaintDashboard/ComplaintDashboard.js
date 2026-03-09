@@ -67,33 +67,37 @@ const ComplaintDashboard = () => {
     setIsModalOpen(false);
     setSelectedComplaint(null);
   };
-  const getComplaintKey = (complaint) => complaint.id ?? complaint.complaintId;
+
   const handleUpdateComplaintLog = async (e) => {
     e.preventDefault();
-  
     try {
-      const complaintKey = getComplaintKey(selectedComplaint);
-      const updateData = { ...changedFields };
-  
-      await axios.put(
-        `${API_BASE_URL}/complaints/${complaintKey}`,
-        updateData,
-        { withCredentials: true }
-      );
-  
-      setComplaints((prevComplaints) =>
-        prevComplaints.map((complaint) =>
-          getComplaintKey(complaint) === complaintKey
-            ? { ...complaint, ...changedFields }
-            : complaint
-        )
-      );
-  
-      handleCloseModal();
+        const updateData = { ...changedFields }; // Prepare updated fields for API request
+
+        console.log("Submitting Update:", updateData);
+
+        // Send update request to backend
+        await axios.put(`${API_BASE_URL}/complaints/${selectedComplaint.id}`, updateData, { withCredentials: true });
+
+        // Update local state with the changed fields
+        setComplaints((prevComplaints) =>
+            prevComplaints.map((complaint) =>
+                complaint.id === selectedComplaint.id
+                    ? {
+                        ...complaint,
+                        ...changedFields,
+                    }
+                    : complaint
+            )
+        );
+
+        // Close the modal after successful update
+        handleCloseModal();
     } catch (error) {
-      console.error("Error updating complaints log:", error);
+        console.error('Error updating complaints log:', error);
     }
-  };
+};
+
+
 
 
   const handleChange = (e) => {
