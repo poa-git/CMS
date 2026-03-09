@@ -31,7 +31,10 @@ public class CloudinaryService {
         try {
             Map uploadResult = cloudinary.uploader().upload(
                     file.getBytes(),
-                    ObjectUtils.asMap("resource_type", "raw")
+                    ObjectUtils.asMap(
+                            "resource_type", "image",
+                            "folder", "job-cards"
+                    )
             );
 
             return uploadResult.get("secure_url").toString();
