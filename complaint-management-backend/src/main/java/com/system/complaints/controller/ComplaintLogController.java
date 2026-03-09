@@ -1,9 +1,9 @@
 package com.system.complaints.controller;
 
 import com.system.complaints.dto.ComplaintBranchGroupDTO;
-import com.system.complaints.model.ComplaintHistory;
 import com.system.complaints.model.ComplaintLog;
 import com.system.complaints.model.RemarksUpdate;
+import com.system.complaints.service.CloudinaryService;
 import com.system.complaints.service.ComplaintLogService;
 import com.system.complaints.service.RemarksUpdateService;
 import com.system.complaints.service.ComplaintHistoryService;
@@ -12,15 +12,14 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import java.util.Arrays;
+
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
-import java.time.LocalDate;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,8 +43,8 @@ public class ComplaintLogController {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
-    @Value("${jobcard.upload.path}")
-    private String uploadPath; // Path where files will be stored
+    @Autowired
+    private CloudinaryService cloudinaryService;
 
     /**
      * Upload a job card for a specific complaint.
@@ -56,29 +55,19 @@ public class ComplaintLogController {
             @RequestParam("jobCard") MultipartFile file) {
 
         try {
-            // Ensure the upload directory exists
-            File directory = new File(uploadPath);
-            if (!directory.exists()) {
-                directory.mkdirs(); // Create directories if they don't exist
+            if (file.isEmpty()) {
+                return ResponseEntity.badRequest().body("No file selected.");
             }
 
-            // Generate unique filename (or keep it as original — adjust as needed)
-            String fileName = file.getOriginalFilename();
-            File destination = new File(directory, fileName);
-
-            // Save the file
-            file.transferTo(destination);
-
-            // Save the file path in the database
-            String jobCardPath = destination.getAbsolutePath();
-            boolean isUpdated = complaintLogService.updateJobCardPath(id, jobCardPath);
+            String cloudUrl = cloudinaryService.uploadFile(file);
+            boolean isUpdated = complaintLogService.updateJobCardPath(id, cloudUrl);
 
             if (isUpdated) {
-                return ResponseEntity.ok("Job card uploaded successfully: " + jobCardPath);
+                return ResponseEntity.ok(cloudUrl);
             } else {
                 return ResponseEntity.badRequest().body("Failed to update job card path in database.");
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.status(500).body("Failed to upload job card.");
         }
