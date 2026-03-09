@@ -283,38 +283,41 @@ useEffect(() => {
     e.preventDefault();
     try {
       const updateData = { ...changedFields };
-
+  
       if (
         selectedComplaint?.complaintStatus === "Closed" &&
         !changedFields.closedDate
       ) {
         updateData.closedDate = new Date().toISOString().split("T")[0];
       }
+  
       if (selectedComplaint?.complaintStatus === "Wait For Approval") {
         updateData.quotationDate =
           changedFields.quotationDate ||
           selectedComplaint.quotationDate ||
           new Date().toISOString().split("T")[0];
       }
+  
       if (selectedComplaint?.complaintStatus === "Approved") {
         updateData.approvedDate =
           changedFields.approvedDate ||
           selectedComplaint.approvedDate ||
           new Date().toISOString().split("T")[0];
       }
+  
       if (
         selectedComplaint?.complaintStatus === "Visit Schedule" &&
         data?.scheduleDate
       ) {
         updateData.scheduleDate = formatDateToLocal(data.scheduleDate);
       }
-
+  
       await axios.put(
         `${API_BASE_URL}/complaints/${selectedComplaint?.id}`,
         updateData,
         { withCredentials: true }
       );
-
+  
       setComplaints((prev) =>
         prev.map((c) =>
           c.id === selectedComplaint?.id
@@ -354,8 +357,9 @@ useEffect(() => {
             : c
         )
       );
-
+  
       fetchDashboardCounts();
+      refreshComplaints();
       handleCloseModal();
     } catch (err) {
       console.error("Error updating complaint:", err);
