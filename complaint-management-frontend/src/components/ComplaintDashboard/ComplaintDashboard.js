@@ -67,27 +67,33 @@ const ComplaintDashboard = () => {
     setIsModalOpen(false);
     setSelectedComplaint(null);
   };
-
+  const getComplaintKey = (complaint) => complaint.id ?? complaint.complaintId;
   const handleUpdateComplaintLog = async (e) => {
     e.preventDefault();
   
     try {
+      const complaintKey = getComplaintKey(selectedComplaint);
       const updateData = { ...changedFields };
   
       await axios.put(
-        `${API_BASE_URL}/complaints/${selectedComplaint.id}`,
+        `${API_BASE_URL}/complaints/${complaintKey}`,
         updateData,
         { withCredentials: true }
       );
   
-      await fetchComplaints();   // best cheap fix
+      setComplaints((prevComplaints) =>
+        prevComplaints.map((complaint) =>
+          getComplaintKey(complaint) === complaintKey
+            ? { ...complaint, ...changedFields }
+            : complaint
+        )
+      );
+  
       handleCloseModal();
     } catch (error) {
       console.error("Error updating complaints log:", error);
     }
   };
-
-
 
 
   const handleChange = (e) => {
