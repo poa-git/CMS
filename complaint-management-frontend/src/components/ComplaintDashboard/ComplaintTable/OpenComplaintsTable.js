@@ -46,7 +46,6 @@ const OpenComplaintsTable = ({
   getCourierStatusClass,
   complaintsRefreshKey,
   fetchDashboardCounts,
-  updatedComplaint,
 }) => {
   const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
 
@@ -347,22 +346,7 @@ const OpenComplaintsTable = ({
       .then((res) => setEngineers(res.data))
       .catch(() => setEngineers([]));
   }, [API_BASE_URL]);
-  useEffect(() => {
-    if (!updatedComplaint) return;
-  
-    setGroups((prevGroups) => {
-      return prevGroups
-        .map((group) => ({
-          ...group,
-          complaints: (group.complaints || [])
-            .map((c) =>
-              c.id === updatedComplaint.id ? updatedComplaint : c
-            )
-            .filter((c) => c.complaintStatus === "Open"),
-        }))
-        .filter((group) => (group.complaints || []).length > 0);
-    });
-  }, [updatedComplaint]);
+
   // Clear filters: reset shared filters (status stays local)
   const handleClearFilters = () => {
     setFilters(defaultFilters);

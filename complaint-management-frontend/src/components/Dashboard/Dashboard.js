@@ -21,7 +21,7 @@ import DailyPendingForClosedComplaintsTable from "../ComplaintDashboard/DailyCom
 import useComplaintReportsLive from "../../hooks/useComplaintReportsLive";
 import { FiltersProvider } from "../../context/FiltersContext";
 import CourierStatusWidget from "./CourierStatusWidget";
-import { connectWebSocket, disconnectWebSocket } from "../../utils/websocketClient";
+import { connectWebSocket,disconnectWebSocket } from "../../utils/websocketClient";
 // ---------------------------------------------
 // LAZY-LOADED COMPONENTS
 // ---------------------------------------------
@@ -91,7 +91,7 @@ function Dashboard() {
   const [showHardwareRequestForm, setShowHardwareRequestForm] = useState(false);
   const [showISBRWPComplaints, setShowISBRWPComplaints] = useState(false);
   const [complaintsRefreshKey, setComplaintsRefreshKey] = useState(0);
-  const [updatedComplaint, setUpdatedComplaint] = useState(null);
+
   // Dashboard Count
   const [dashboardCounts, setDashboardCounts] = useState(null);
   const [dashboardCountsLoading, setDashboardCountsLoading] = useState(true);
@@ -130,28 +130,28 @@ function Dashboard() {
   }, []);
 
   // -------------------------------------------------------------------------
-  // EFFECT: WebSocket subscriptions for courier + trends live updates
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    connectWebSocket(
-      // On courier update
-      (updatedCounts) => {
-        setCourierCounts(updatedCounts);
-        setCourierCountsLoading(false);
-        setCourierCountsError(null);
-      },
-      // On trends update
-      (updatedTrends) => {
-        setTrendsData(updatedTrends);
-        setTrendsLoading(false);
-        setTrendsError(null);
-      }
-    );
+// EFFECT: WebSocket subscriptions for courier + trends live updates
+// -------------------------------------------------------------------------
+useEffect(() => {
+  connectWebSocket(
+    // On courier update
+    (updatedCounts) => {
+      setCourierCounts(updatedCounts);
+      setCourierCountsLoading(false);
+      setCourierCountsError(null);
+    },
+    // On trends update
+    (updatedTrends) => {
+      setTrendsData(updatedTrends);
+      setTrendsLoading(false);
+      setTrendsError(null);
+    }
+  );
 
-    return () => {
-      disconnectWebSocket();
-    };
-  }, []);
+  return () => {
+    disconnectWebSocket();
+  };
+}, []);
 
 
   const fetchDashboardCounts = async () => {
@@ -281,7 +281,6 @@ function Dashboard() {
 
   const handleUpdateComplaintLog = async (e, data) => {
     e.preventDefault();
-
     try {
       const updateData = { ...changedFields };
 
@@ -291,21 +290,18 @@ function Dashboard() {
       ) {
         updateData.closedDate = new Date().toISOString().split("T")[0];
       }
-
       if (selectedComplaint?.complaintStatus === "Wait For Approval") {
         updateData.quotationDate =
           changedFields.quotationDate ||
           selectedComplaint.quotationDate ||
           new Date().toISOString().split("T")[0];
       }
-
       if (selectedComplaint?.complaintStatus === "Approved") {
         updateData.approvedDate =
           changedFields.approvedDate ||
           selectedComplaint.approvedDate ||
           new Date().toISOString().split("T")[0];
       }
-
       if (
         selectedComplaint?.complaintStatus === "Visit Schedule" &&
         data?.scheduleDate
@@ -313,45 +309,51 @@ function Dashboard() {
         updateData.scheduleDate = formatDateToLocal(data.scheduleDate);
       }
 
-      if (
-        selectedComplaint?.complaintStatus === "Hardware Picked" &&
-        !changedFields.hardwarePickedDate
-      ) {
-        updateData.hardwarePickedDate =
-          selectedComplaint.hardwarePickedDate ||
-          new Date().toISOString().split("T")[0];
-      }
-
-      if (
-        selectedComplaint?.complaintStatus === "Pending For Closed" &&
-        !changedFields.pendingForClosedDate
-      ) {
-        updateData.pendingForClosedDate =
-          selectedComplaint.pendingForClosedDate ||
-          new Date().toISOString().split("T")[0];
-      }
-
-      if (
-        selectedComplaint?.complaintStatus === "FOC" &&
-        !changedFields.focDate
-      ) {
-        updateData.focDate =
-          selectedComplaint.focDate || new Date().toISOString().split("T")[0];
-      }
-
-      const response = await axios.put(
+      await axios.put(
         `${API_BASE_URL}/complaints/${selectedComplaint?.id}`,
         updateData,
         { withCredentials: true }
       );
 
-      const savedComplaint = response.data;
-
       setComplaints((prev) =>
-        prev.map((c) => (c.id === selectedComplaint?.id ? savedComplaint : c))
+        prev.map((c) =>
+          c.id === selectedComplaint?.id
+            ? {
+                ...c,
+                ...changedFields,
+                complaintStatus: selectedComplaint?.complaintStatus,
+                closedDate:
+                  selectedComplaint?.complaintStatus === "Closed"
+                    ? updateData.closedDate
+                    : c.closedDate,
+                quotationDate:
+                  selectedComplaint?.complaintStatus === "Wait For Approval"
+                    ? updateData.quotationDate
+                    : c.quotationDate,
+                approvedDate:
+                  selectedComplaint?.complaintStatus === "Approved"
+                    ? updateData.approvedDate
+                    : c.approvedDate,
+                scheduleDate:
+                  selectedComplaint?.complaintStatus === "Visit Schedule"
+                    ? updateData.scheduleDate
+                    : c.scheduleDate,
+                hardwarePickedDate:
+                  selectedComplaint?.complaintStatus === "Hardware Picked"
+                    ? updateData.hardwarePickedDate
+                    : c.hardwarePickedDate,
+                pendingForClosedDate:
+                  selectedComplaint?.complaintStatus === "Pending For Closed"
+                    ? updateData.pendingForClosedDate
+                    : c.pendingForClosedDate,
+                focDate:
+                  selectedComplaint?.complaintStatus === "FOC"
+                    ? updateData.focDate
+                    : c.focDate,
+              }
+            : c
+        )
       );
-
-      setUpdatedComplaint(savedComplaint);
 
       fetchDashboardCounts();
       handleCloseModal();
@@ -707,9 +709,9 @@ function Dashboard() {
                 calculateAgingDays={calculateAgingDays}
                 getStatusClass={getStatusClass}
                 getCourierStatusClass={getCourierStatusClass}
+                refreshComplaints={refreshComplaints}
                 complaintsRefreshKey={complaintsRefreshKey}
                 fetchDashboardCounts={fetchDashboardCounts}
-                updatedComplaint={updatedComplaint}
               />
             </Suspense>
           )}
