@@ -6,35 +6,9 @@ import ReportModal from "../../Lab/ReportModal";
 import ComplaintFilters from "../ComplaintFilters/ComplaintFilters";
 import { generateExcelReport } from "../../ExcelReportGenerator/ExcelReportGenerator";
 import { generateDaySummaryReport } from "../../ExcelReportGenerator/generateDaySummaryReport";
-import SockJS from "sockjs-client";
-import { Client } from "@stomp/stompjs";
+import useComplaintReportsLive from "../../../hooks/useComplaintReportsLive";
 import Loader from "../../../utils/Loader";
 import { useFilters } from "../../../context/FiltersContext"; // ✅ shared filters context
-
-// WebSocket auto-refresh hook (kept local as in your file)
-function useComplaintReportsLive(onUpdate) {
-  useEffect(() => {
-    const wsUrl = (process.env.REACT_APP_API_BASE_URL || "") + "/ws";
-    const client = new Client({
-      webSocketFactory: () => new SockJS(wsUrl),
-      reconnectDelay: 5000,
-      debug: () => {},
-      onConnect: () => {
-        client.subscribe("/topic/paginated-by-status", (message) => {
-          try {
-            const data =
-              typeof message.body === "string"
-                ? JSON.parse(message.body)
-                : message.body;
-            if (onUpdate) onUpdate(data);
-          } catch {}
-        });
-      },
-    });
-    client.activate();
-    return () => client.deactivate();
-  }, [onUpdate]);
-}
 
 const pageSize = 80;
 
@@ -127,86 +101,79 @@ const OpenComplaintsTable = ({
     // export only:
     "reportType",
   ];
+// --- Live updates via WebSocket
+useComplaintReportsLive(async (wsData) => {
+  if (!wsData || !wsData.complaintId) return;
 
-  // Live websocket refresh
-  useComplaintReportsLive(async (wsData) => {
-    if (!wsData || !wsData.complaintId) return;
+  // Check if the complaint is visible in the current groups
+  const isVisible = branchGroups.some((group) =>
+    (group.complaints || []).some((c) => c.complaintId === wsData.complaintId)
+  );
 
-    // Check if the complaint is visible in the current groups
-    const isVisible = groups.some((group) =>
-      (group.complaints || []).some((c) => c.complaintId === wsData.complaintId)
-    );
-
-    if (wsData.action === "created") {
-      try {
-        // Fetch the new complaint by complaintId
-        const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
-          params: { complaintId: wsData.complaintId },
-          withCredentials: true,
-        });
-        const newComplaint = res.data;
-        setGroups((prevGroups) => {
-          const groupKey = `${newComplaint.bankName}|${newComplaint.branchCode}|${newComplaint.branchName}`;
-          let found = false;
-          const newGroups = prevGroups.map((group) => {
-            const gKey = `${group.bankName}|${group.branchCode}|${group.branchName}`;
-            if (gKey === groupKey) {
-              found = true;
-              return {
-                ...group,
-                complaints: [newComplaint, ...(group.complaints || [])],
-              };
-            }
-            return group;
-          });
-          if (!found) {
-            // If the group doesn't exist, add it to the top
-            return [
-              {
-                bankName: newComplaint.bankName,
-                branchCode: newComplaint.branchCode,
-                branchName: newComplaint.branchName,
-                complaints: [newComplaint],
-              },
-              ...prevGroups,
-            ];
-          }
-          return newGroups;
-        });
-        fetchDashboardCounts && fetchDashboardCounts();
-      } catch (e) {
-        // fallback to full reload only if needed
-        fetchComplaints();
-        fetchDashboardCounts && fetchDashboardCounts();
-      }
-      return;
-    }
-
-    if (!isVisible) return;
-
+  if (wsData.action === "created") {
     try {
-      // Fetch the updated complaint by complaintId
+      // Fetch the new complaint by complaintId
       const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
         params: { complaintId: wsData.complaintId },
         withCredentials: true,
       });
-      const updatedComplaint = res.data;
-      console.log("Updated complaint:", updatedComplaint.courierStatus);
-      setGroups((prevGroups) =>
-        prevGroups.map((group) => ({
-          ...group,
-          complaints: (group.complaints || []).map((c) =>
-            c.complaintId === wsData.complaintId ? updatedComplaint : c
-          ),
-        }))
-      );
-
-      fetchDashboardCounts && fetchDashboardCounts();
+      const newComplaint = res.data;
+      setBranchGroups((prevGroups) => {
+        const groupKey = `${newComplaint.bankName}|${newComplaint.branchCode}|${newComplaint.branchName}`;
+        let found = false;
+        const newGroups = prevGroups.map((group) => {
+          const gKey = `${group.bankName}|${group.branchCode}|${group.branchName}`;
+          if (gKey === groupKey) {
+            found = true;
+            return {
+              ...group,
+              complaints: [newComplaint, ...(group.complaints || [])],
+            };
+          }
+          return group;
+        });
+        if (!found) {
+          // If group doesn't exist, add new group to top
+          return [
+            {
+              bankName: newComplaint.bankName,
+              branchCode: newComplaint.branchCode,
+              branchName: newComplaint.branchName,
+              complaints: [newComplaint],
+            },
+            ...prevGroups,
+          ];
+        }
+        return newGroups;
+      });
     } catch {
-      // fallback to full refresh only if needed
-      // fetchComplaints();
+      fetchComplaints(); // fallback to full reload only if needed
     }
-  });
+    return;
+  }
+
+  if (!isVisible) return;
+
+  try {
+    // Fetch the updated complaint by complaintId
+    const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
+      params: { complaintId: wsData.complaintId },
+      withCredentials: true,
+    });
+    const updatedComplaint = res.data;
+
+    setBranchGroups((prevGroups) =>
+      prevGroups.map((group) => ({
+        ...group,
+        complaints: (group.complaints || []).map((c) =>
+          c.complaintId === wsData.complaintId ? updatedComplaint : c
+        ),
+      }))
+    );
+  } catch {
+    // fallback: fetchComplaints();
+  }
+});
 
   // Fetch complaints (with filters)
   const fetchComplaints = async () => {
