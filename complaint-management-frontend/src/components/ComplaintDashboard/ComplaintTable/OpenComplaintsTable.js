@@ -196,7 +196,14 @@ const OpenComplaintsTable = ({
             .map((c) =>
               c.complaintId === wsData.complaintId ? updatedComplaint : c
             )
-            
+            // ✅ Only remove THIS specific updated complaint if it moved to Closed/Approved
+            // Keep ALL other complaints regardless of their status (FOC, Visit Schedule etc. are valid)
+            .filter((c) =>
+              c.complaintId === wsData.complaintId
+                ? c.complaintStatus !== "Closed" && c.complaintStatus !== "Pending For Closed" && c.complaintStatus !== "Wait For Approval"
+                : true
+            );
+
           return { ...group, complaints: updatedComplaints };
         })
         .filter((group) => (group.complaints || []).length > 0);
