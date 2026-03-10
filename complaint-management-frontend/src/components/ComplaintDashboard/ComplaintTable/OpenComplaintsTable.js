@@ -9,9 +9,9 @@ import { generateDaySummaryReport } from "../../ExcelReportGenerator/generateDay
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
 import Loader from "../../../utils/Loader";
-import { useFilters } from "../../../context/FiltersContext";
+import { useFilters } from "../../../context/FiltersContext"; // ✅ shared filters context
 
-// WebSocket auto-refresh hook (kept local)
+// WebSocket auto-refresh hook (kept local as in your file)
 function useComplaintReportsLive(onUpdate) {
   useEffect(() => {
     const wsUrl = (process.env.REACT_APP_API_BASE_URL || "") + "/ws";
@@ -49,6 +49,7 @@ const OpenComplaintsTable = ({
 }) => {
   const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
 
+  // ✅ Use global/shared filters, keep status local to this component
   const { filters: globalFilters, setFilters, defaultFilters } = useFilters();
   const [status] = useState("Open");
 
@@ -66,20 +67,32 @@ const OpenComplaintsTable = ({
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
   const [selectedRow, setSelectedRow] = useState(null);
   const [hoveredComplaintId, setHoveredComplaintId] = useState(null);
-  const [selectedComplaintIdForReports, setSelectedComplaintIdForReports] = useState(null);
+  const [selectedComplaintIdForReports, setSelectedComplaintIdForReports] =
+    useState(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportAvailability, setReportAvailability] = useState({});
+
+  // NEW: backend-provided running serial offset (complaints before this page)
   const [complaintsBeforePage, setComplaintsBeforePage] = useState(0);
 
+  // Helper for all complaints flat array
   const allComplaintsFlat = groups.flatMap((g) => g.complaints || []);
 
-  const uniqueSubStatuses = Array.from(
-    new Set(allComplaintsFlat.map((c) => c.subStatus).filter(Boolean))
+  // Dropdowns for filters
+  const uniqueBanks = Array.from(
+    new Set(allComplaintsFlat.map((c) => c.bankName).filter(Boolean))
+  );
+  const uniqueEngineers = Array.from(
+    new Set(allComplaintsFlat.map((c) => c.engineerName).filter(Boolean))
   );
   const uniqueCities = Array.from(
     new Set(allComplaintsFlat.map((c) => c.city).filter(Boolean))
   );
+  const uniqueSubStatuses = Array.from(
+    new Set(allComplaintsFlat.map((c) => c.subStatus).filter(Boolean))
+  );
 
+  // Report types
   const reportTypes = [
     { value: "standard", label: "Standard" },
     { value: "untouched", label: "Untouched" },
@@ -87,6 +100,7 @@ const OpenComplaintsTable = ({
     { value: "daySummaryMulti", label: "Day Summary" },
   ];
 
+  // small util
   const pick = (obj, keys) =>
     Object.fromEntries(
       keys
@@ -94,6 +108,7 @@ const OpenComplaintsTable = ({
         .filter(([, v]) => v !== undefined && v !== "")
     );
 
+  // Only the fields this component cares about (avoid cross-tab leaks)
   const OPEN_ALLOWED_KEYS = [
     "bankName",
     "branchCode",
@@ -105,28 +120,31 @@ const OpenComplaintsTable = ({
     "priority",
     "inPool",
     "hasReport",
+    // open date keys:
     "date",
     "dateFrom",
     "dateTo",
+    // export only:
     "reportType",
   ];
 
-  // ✅ UPDATED: WebSocket handler — no isVisible guard, targeted single-row update
+  // Live websocket refresh
   useComplaintReportsLive(async (wsData) => {
     if (!wsData || !wsData.complaintId) return;
 
-    // Handle new complaint created
+    // Check if the complaint is visible in the current groups
+    const isVisible = groups.some((group) =>
+      (group.complaints || []).some((c) => c.complaintId === wsData.complaintId)
+    );
+
     if (wsData.action === "created") {
       try {
+        // Fetch the new complaint by complaintId
         const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
           params: { complaintId: wsData.complaintId },
           withCredentials: true,
         });
         const newComplaint = res.data;
-
-        // Only add if it belongs to "Open" status
-        if (newComplaint.complaintStatus !== "Open") return;
-
         setGroups((prevGroups) => {
           const groupKey = `${newComplaint.bankName}|${newComplaint.branchCode}|${newComplaint.branchName}`;
           let found = false;
@@ -142,6 +160,7 @@ const OpenComplaintsTable = ({
             return group;
           });
           if (!found) {
+            // If the group doesn't exist, add it to the top
             return [
               {
                 bankName: newComplaint.bankName,
@@ -155,76 +174,75 @@ const OpenComplaintsTable = ({
           return newGroups;
         });
         fetchDashboardCounts && fetchDashboardCounts();
-      } catch {
+      } catch (e) {
+        // fallback to full reload only if needed
         fetchComplaints();
         fetchDashboardCounts && fetchDashboardCounts();
       }
       return;
     }
 
-    // ✅ Handle update — no isVisible check, always process
+    if (!isVisible) return;
+
     try {
+      // Fetch the updated complaint by complaintId
       const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
         params: { complaintId: wsData.complaintId },
         withCredentials: true,
       });
       const updatedComplaint = res.data;
-
-      setGroups((prevGroups) => {
-        const newGroups = prevGroups.map((group) => {
-          const updatedComplaints = (group.complaints || [])
-            .map((c) =>
-              c.complaintId === wsData.complaintId ? updatedComplaint : c
-            )
-            // ✅ Remove from list if status changed away from "Open"
-            .filter((c) => c.complaintStatus === "Open");
-
-          return { ...group, complaints: updatedComplaints };
-        })
-        // ✅ Remove empty groups after filtering
-        .filter((group) => (group.complaints || []).length > 0);
-
-        return newGroups;
-      });
+      console.log("Updated complaint:", updatedComplaint.courierStatus);
+      setGroups((prevGroups) =>
+        prevGroups.map((group) => ({
+          ...group,
+          complaints: (group.complaints || []).map((c) =>
+            c.complaintId === wsData.complaintId ? updatedComplaint : c
+          ),
+        }))
+      );
 
       fetchDashboardCounts && fetchDashboardCounts();
     } catch {
-      // silent fail — don't trigger full refetch
+      // fallback to full refresh only if needed
+      // fetchComplaints();
     }
   });
 
   // Fetch complaints (with filters)
   const fetchComplaints = async () => {
     setLoading(true);
-    setProgress(0);
+    setProgress(0); // reset loader percentage
 
+    // simulate progress increase until 90%
     let interval = setInterval(() => {
       setProgress((prev) => (prev < 90 ? prev + 10 : prev));
     }, 300);
 
     try {
+      // Use shared filters (whitelisted) + local status
       const shared = pick(globalFilters, OPEN_ALLOWED_KEYS);
-      const { reportType, ...filtersForApi } = shared;
+      const { reportType, ...filtersForApi } = shared; // don't send reportType to list API
 
       const params = {
         page: currentPage,
         size: pageSize,
-        status,
+        status, // ⬅️ force local status
         ...filtersForApi,
         hasReport: shared.hasReport ? true : undefined,
       };
 
+      // Remove empty/undefined
       Object.keys(params).forEach(
         (key) =>
-          (params[key] === undefined || params[key] === "") &&
-          delete params[key]
+          (params[key] === undefined || params[key] === "") && delete params[key]
       );
 
-      const res = await axios.get(
-        `${API_BASE_URL}/complaints/paginated-by-status`,
-        { params, withCredentials: true }
-      );
+      const res = await axios.get(`${API_BASE_URL}/complaints/paginated-by-status`, {
+        params,
+        withCredentials: true,
+      });
 
+      // Defensive: sort each group's complaints by date (latest first)
       const nextGroups = Array.isArray(res.data.content)
         ? res.data.content.map((group) => ({
             ...group,
@@ -238,25 +256,27 @@ const OpenComplaintsTable = ({
       setTotalPages(res.data.totalPages || 1);
       setTotalRecords(res.data.totalElements || 0);
 
+      // NEW: read backend header for continuous S.No offset
       const beforePageHeader =
         res.headers?.["x-complaints-before-page"] ??
         res.headers?.["X-Complaints-Before-Page"];
       setComplaintsBeforePage(Number.parseInt(beforePageHeader, 10) || 0);
 
+      // complete progress
       setProgress(100);
-    } catch {
+    } catch (err) {
       setGroups([]);
       setTotalPages(1);
       setTotalRecords(0);
-      setComplaintsBeforePage(0);
-      setProgress(100);
+      setComplaintsBeforePage(0); // reset offset on error
+      setProgress(100); // still show 100% if error
     } finally {
       clearInterval(interval);
-      setTimeout(() => setLoading(false), 500);
+      setTimeout(() => setLoading(false), 500); // short delay to let 100% show
     }
   };
 
-  // Fetch remarks counts
+  // Fetch remarks counts for all complaints in current groups
   useEffect(() => {
     const idsToFetch = allComplaintsFlat
       .map((c) => c.id)
@@ -286,7 +306,7 @@ const OpenComplaintsTable = ({
     setCurrentPage(0);
   }, [globalFilters]);
 
-  // Fetch report availability
+  // Fetch report availability for all visible complaints
   useEffect(() => {
     const visibleComplaintIds = allComplaintsFlat
       .map((c) => c.complaintId)
@@ -307,7 +327,7 @@ const OpenComplaintsTable = ({
     // eslint-disable-next-line
   }, [groups]);
 
-  // Fetch dropdown options
+  // Fetch dropdown options from backend on mount
   useEffect(() => {
     axios
       .get(`${API_BASE_URL}/data/banks`, { withCredentials: true })
@@ -327,25 +347,24 @@ const OpenComplaintsTable = ({
       .catch(() => setEngineers([]));
   }, [API_BASE_URL]);
 
+  // Clear filters: reset shared filters (status stays local)
   const handleClearFilters = () => {
     setFilters(defaultFilters);
   };
 
   // Export helpers
-  const EXPORT_PAGE_SIZE = 1000;
-  const EXPORT_BATCH_SIZE = 3;
+  const EXPORT_PAGE_SIZE = 1000; // bigger chunk size for export
+  const EXPORT_BATCH_SIZE = 3;   // safe parallel requests per batch
 
   const fetchAllComplaintsForExport = async () => {
     const shared = pick(globalFilters, OPEN_ALLOWED_KEYS);
     const { reportType, ...filtersForApi } = shared;
 
-    const firstRes = await axios.get(
-      `${API_BASE_URL}/complaints/paginated-by-status`,
-      {
-        params: { ...filtersForApi, status, page: 0, size: EXPORT_PAGE_SIZE },
-        withCredentials: true,
-      }
-    );
+    // 1) First page request to get totalPages + initial data
+    const firstRes = await axios.get(`${API_BASE_URL}/complaints/paginated-by-status`, {
+      params: { ...filtersForApi, status, page: 0, size: EXPORT_PAGE_SIZE },
+      withCredentials: true,
+    });
 
     let allFetched = Array.isArray(firstRes.data?.content)
       ? firstRes.data.content.flatMap((g) => g.complaints || [])
@@ -354,23 +373,21 @@ const OpenComplaintsTable = ({
     const totalPages = firstRes.data?.totalPages || 1;
     if (totalPages <= 1) return allFetched;
 
+    // 2) Remaining pages fetched in parallel batches
     const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 1);
 
     for (let i = 0; i < pages.length; i += EXPORT_BATCH_SIZE) {
       const slice = pages.slice(i, i + EXPORT_BATCH_SIZE);
+
       const responses = await Promise.all(
         slice.map((p) =>
           axios.get(`${API_BASE_URL}/complaints/paginated-by-status`, {
-            params: {
-              ...filtersForApi,
-              status,
-              page: p,
-              size: EXPORT_PAGE_SIZE,
-            },
+            params: { ...filtersForApi, status, page: p, size: EXPORT_PAGE_SIZE },
             withCredentials: true,
           })
         )
       );
+
       responses.forEach((res) => {
         if (Array.isArray(res.data?.content)) {
           allFetched = allFetched.concat(
@@ -417,17 +434,20 @@ const OpenComplaintsTable = ({
     try {
       setLoading(true);
       const allComplaints = await fetchAllComplaintsForExport();
+
+      // ⬅️ Exclude "Wait For Approval" complaints
       const filteredComplaints = allComplaints.filter(
         (c) => c.complaintStatus !== "Wait For Approval"
       );
+
       await generateExcelReport(
         filteredComplaints,
-        status,
+        status, // ⬅️ sheet/status label
         API_BASE_URL,
         uniqueCities,
         filtersToUse.reportType
       );
-    } catch {
+    } catch (err) {
       alert("Failed to fetch all data for export.");
     } finally {
       setLoading(false);
@@ -435,7 +455,9 @@ const OpenComplaintsTable = ({
   };
 
   const handleRowClick = (complaintId) => {
-    setSelectedRow((prev) => (prev === complaintId ? null : complaintId));
+    setSelectedRow((prevSelectedRow) =>
+      prevSelectedRow === complaintId ? null : complaintId
+    );
   };
 
   const isSpecialCity = (city) => {
@@ -482,16 +504,8 @@ const OpenComplaintsTable = ({
         { isPriority: newPriority },
         { withCredentials: true }
       );
-      // ✅ Optimistic update — no full refetch needed
-      setGroups((prevGroups) =>
-        prevGroups.map((group) => ({
-          ...group,
-          complaints: (group.complaints || []).map((c) =>
-            c.id === complaint.id ? { ...c, priority: newPriority } : c
-          ),
-        }))
-      );
-    } catch {}
+      fetchComplaints();
+    } catch (error) {}
   };
 
   const toggleInPool = async (complaint) => {
@@ -502,26 +516,19 @@ const OpenComplaintsTable = ({
         { markedInPool: newMarkedInPool },
         { withCredentials: true }
       );
-      // ✅ Optimistic update — no full refetch needed
-      setGroups((prevGroups) =>
-        prevGroups.map((group) => ({
-          ...group,
-          complaints: (group.complaints || []).map((c) =>
-            c.id === complaint.id ? { ...c, markedInPool: newMarkedInPool } : c
-          ),
-        }))
-      );
-    } catch {}
+      fetchComplaints();
+    } catch (error) {}
   };
 
+  // S.No. offset comes from backend (continuous across pages)
   let serialCounter = complaintsBeforePage;
 
   return (
     <div>
       {/* FILTERS BAR */}
       <ComplaintFilters
-        filters={globalFilters}
-        onFiltersChange={setFilters}
+        filters={globalFilters}          // ⬅️ shared filters
+        onFiltersChange={setFilters}     // ⬅️ update shared filters
         banks={bankList}
         cities={cityList}
         statuses={statusList}
@@ -538,6 +545,7 @@ const OpenComplaintsTable = ({
         }}
       />
 
+      {/* Complaint Table */}
       {selectedComplaintId ? (
         <div>
           <button onClick={handleBackToTable} className="back-button">
@@ -586,7 +594,7 @@ const OpenComplaintsTable = ({
                     <tr className="group-header-row">
                       <td
                         className="group-header-row-data"
-                        colSpan="22"
+                        colSpan="21"
                         style={{
                           fontSize: "16px",
                           fontWeight: "bold",
@@ -615,7 +623,11 @@ const OpenComplaintsTable = ({
                           `}
                         >
                           <td>{serialCounter}</td>
-                          <td className={getStatusClass(complaint.complaintStatus)}>
+                          <td
+                            className={getStatusClass(
+                              complaint.complaintStatus
+                            )}
+                          >
                             <div
                               className="status-hover-container"
                               onMouseEnter={() =>
@@ -625,17 +637,30 @@ const OpenComplaintsTable = ({
                             >
                               {complaint.complaintStatus || "Open"}
                               {hoveredComplaintId === complaint.id &&
-                                complaint.complaintStatus === "Visit Schedule" && (
+                                complaint.complaintStatus ===
+                                  "Visit Schedule" && (
                                   <div className="visit-schedule-tooltip">
-                                    <p>Schedule Date: {complaint.scheduleDate || "N/A"}</p>
-                                    <p>Engineer: {complaint.visitorName || "N/A"}</p>
+                                    <p>
+                                      Schedule Date:{" "}
+                                      {complaint.scheduleDate || "N/A"}
+                                    </p>
+                                    <p>
+                                      Engineer: {complaint.visitorName || "N/A"}
+                                    </p>
                                     <p>Bank: {complaint.bankName || "N/A"}</p>
-                                    <p>Branch Code: {complaint.branchCode || "N/A"}</p>
+                                    <p>
+                                      Branch Code:{" "}
+                                      {complaint.branchCode || "N/A"}
+                                    </p>
                                   </div>
                                 )}
                             </div>
                           </td>
-                          <td className={getCourierStatusClass(complaint.courierStatus)}>
+                          <td
+                            className={getCourierStatusClass(
+                              complaint.courierStatus
+                            )}
+                          >
                             {complaint.courierStatus || "N/A"}
                           </td>
                           <td>
@@ -667,7 +692,9 @@ const OpenComplaintsTable = ({
                                   : "Mark as Priority"
                               }
                             >
-                              {complaint.priority ? "High Priority" : "Mark as Priority"}
+                              {complaint.priority
+                                ? "High Priority"
+                                : "Mark as Priority"}
                             </button>
                           </td>
                           {isSpecialCity(complaint.city) ? (
@@ -713,7 +740,9 @@ const OpenComplaintsTable = ({
                                 e.stopPropagation();
                                 openRemarksModal(complaint);
                               }}
-                              disabled={remarksCounts[complaint.id] === undefined}
+                              disabled={
+                                remarksCounts[complaint.id] === undefined
+                              }
                             >
                               {remarksCounts[complaint.id] === undefined
                                 ? "Loading..."
@@ -729,8 +758,10 @@ const OpenComplaintsTable = ({
                               </span>
                             </button>
                           </td>
+
                           <td>
-                            {reportAvailability[complaint.complaintId] === undefined ? (
+                            {reportAvailability[complaint.complaintId] ===
+                            undefined ? (
                               <button
                                 className="view-report-button loading-btn"
                                 disabled
@@ -742,7 +773,9 @@ const OpenComplaintsTable = ({
                                 className="view-report-button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openReportsForComplaint(complaint.complaintId);
+                                  openReportsForComplaint(
+                                    complaint.complaintId
+                                  );
                                 }}
                               >
                                 View Reports
@@ -793,7 +826,7 @@ const OpenComplaintsTable = ({
                 ))
               ) : (
                 <tr>
-                  <td colSpan="22" style={{ textAlign: "center" }}>
+                  <td colSpan="21" style={{ textAlign: "center" }}>
                     No open complaints to display
                   </td>
                 </tr>

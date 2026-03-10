@@ -170,7 +170,9 @@ useEffect(() => {
     }
   };
 
- 
+  useComplaintReportsLive(() => {
+    fetchDashboardCounts();
+  });
 
   // -------------------------------------------------------------------------
   // EFFECT: Grab role/username & initial data
@@ -699,19 +701,20 @@ useEffect(() => {
             </Suspense>
           )}
 
-{viewStatus === "Open" && !isDailyView && (
-  <Suspense fallback={<div>Loading...</div>}>
-    <OpenComplaintsTable
-      handleOpenModal={handleOpenModal}
-      openRemarksModal={openRemarksModal}
-      calculateAgingDays={calculateAgingDays}
-      getStatusClass={getStatusClass}
-      getCourierStatusClass={getCourierStatusClass}
-      complaintsRefreshKey={complaintsRefreshKey}
-      fetchDashboardCounts={fetchDashboardCounts}
-    />
-  </Suspense>
-)}
+          {viewStatus === "Open" && !isDailyView && (
+            <Suspense fallback={<div>Loading...</div>}>
+              <OpenComplaintsTable
+                handleOpenModal={handleOpenModal}
+                openRemarksModal={openRemarksModal}
+                calculateAgingDays={calculateAgingDays}
+                getStatusClass={getStatusClass}
+                getCourierStatusClass={getCourierStatusClass}
+                refreshComplaints={refreshComplaints}
+                complaintsRefreshKey={complaintsRefreshKey}
+                fetchDashboardCounts={fetchDashboardCounts}
+              />
+            </Suspense>
+          )}
 
           {viewStatus === "In Progress" && !isDailyView && (
             <Suspense fallback={<div>Loading...</div>}>
