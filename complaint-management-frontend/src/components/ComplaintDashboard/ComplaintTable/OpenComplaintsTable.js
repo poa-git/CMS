@@ -16,8 +16,13 @@ function useComplaintReportsLive(onUpdate) {
   useEffect(() => {
     const wsUrl = (process.env.REACT_APP_API_BASE_URL || "") + "/ws";
     const client = new Client({
-      webSocketFactory: () => new SockJS(wsUrl),
-      reconnectDelay: 5000,
+      // ✅ Force native WebSocket only — skip SockJS HTTP fallback
+      webSocketFactory: () => new SockJS(wsUrl, null, {
+        transports: ["websocket"] // force WS only, no polling fallback
+      }),
+      reconnectDelay: 3000,       // reconnect faster (was 5000)
+      heartbeatIncoming: 10000,   // ✅ keep connection alive every 10s
+      heartbeatOutgoing: 10000,   // ✅ prevents Railway proxy from killing idle connection
       debug: () => {},
       onConnect: () => {
         client.subscribe("/topic/paginated-by-status", (message) => {
@@ -29,6 +34,12 @@ function useComplaintReportsLive(onUpdate) {
             if (onUpdate) onUpdate(data);
           } catch {}
         });
+      },
+      onDisconnect: () => {
+        console.warn("WS disconnected — will auto-reconnect");
+      },
+      onStompError: (frame) => {
+        console.error("STOMP error", frame);
       },
     });
     client.activate();
