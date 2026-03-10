@@ -1,4 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+} from "react";
 import axios from "axios";
 import ComplaintReport from "../../ComplaintReport/ComplaintReport";
 import "./ComplaintTable.css";
@@ -9,30 +14,60 @@ import { generateDaySummaryReport } from "../../ExcelReportGenerator/generateDay
 import SockJS from "sockjs-client";
 import { Client } from "@stomp/stompjs";
 import Loader from "../../../utils/Loader";
-import { useFilters } from "../../../context/FiltersContext"; // ✅ shared filters context
+import { useFilters } from "../../../context/FiltersContext";
 
-// WebSocket auto-refresh hook (kept local as in your file)
+// WebSocket live hook
 function useComplaintReportsLive(onUpdate) {
   useEffect(() => {
-    const wsUrl = (process.env.REACT_APP_API_BASE_URL || "") + "/ws";
+    const wsUrl = `${process.env.REACT_APP_API_BASE_URL || ""}/ws`;
+
     const client = new Client({
       webSocketFactory: () => new SockJS(wsUrl),
       reconnectDelay: 5000,
+      heartbeatIncoming: 4000,
+      heartbeatOutgoing: 4000,
       debug: () => {},
+
       onConnect: () => {
+        console.log("WebSocket connected");
+
         client.subscribe("/topic/paginated-by-status", (message) => {
           try {
             const data =
               typeof message.body === "string"
                 ? JSON.parse(message.body)
                 : message.body;
-            if (onUpdate) onUpdate(data);
-          } catch {}
+
+            console.log("WS message:", data);
+            onUpdate?.(data);
+          } catch (err) {
+            console.error("WS parse error:", err);
+          }
         });
       },
+
+      onStompError: (frame) => {
+        console.error("STOMP error:", frame);
+      },
+
+      onWebSocketClose: (event) => {
+        console.warn("WebSocket closed:", event);
+      },
+
+      onWebSocketError: (event) => {
+        console.error("WebSocket error:", event);
+      },
     });
+
     client.activate();
-    return () => client.deactivate();
+
+    return () => {
+      try {
+        client.deactivate();
+      } catch (err) {
+        console.error("WebSocket deactivate error:", err);
+      }
+    };
   }, [onUpdate]);
 }
 
@@ -49,7 +84,6 @@ const OpenComplaintsTable = ({
 }) => {
   const API_BASE_URL = process.env.REACT_APP_API_BASE_URL;
 
-  // ✅ Use global/shared filters, keep status local to this component
   const { filters: globalFilters, setFilters, defaultFilters } = useFilters();
   const [status] = useState("Open");
 
@@ -71,14 +105,16 @@ const OpenComplaintsTable = ({
     useState(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportAvailability, setReportAvailability] = useState({});
-
-  // NEW: backend-provided running serial offset (complaints before this page)
   const [complaintsBeforePage, setComplaintsBeforePage] = useState(0);
 
-  // Helper for all complaints flat array
+  // Keep latest groups in ref for websocket callback
+  const groupsRef = useRef(groups);
+  useEffect(() => {
+    groupsRef.current = groups;
+  }, [groups]);
+
   const allComplaintsFlat = groups.flatMap((g) => g.complaints || []);
 
-  // Dropdowns for filters
   const uniqueBanks = Array.from(
     new Set(allComplaintsFlat.map((c) => c.bankName).filter(Boolean))
   );
@@ -92,7 +128,6 @@ const OpenComplaintsTable = ({
     new Set(allComplaintsFlat.map((c) => c.subStatus).filter(Boolean))
   );
 
-  // Report types
   const reportTypes = [
     { value: "standard", label: "Standard" },
     { value: "untouched", label: "Untouched" },
@@ -100,7 +135,6 @@ const OpenComplaintsTable = ({
     { value: "daySummaryMulti", label: "Day Summary" },
   ];
 
-  // small util
   const pick = (obj, keys) =>
     Object.fromEntries(
       keys
@@ -108,7 +142,6 @@ const OpenComplaintsTable = ({
         .filter(([, v]) => v !== undefined && v !== "")
     );
 
-  // Only the fields this component cares about (avoid cross-tab leaks)
   const OPEN_ALLOWED_KEYS = [
     "bankName",
     "branchCode",
@@ -120,129 +153,45 @@ const OpenComplaintsTable = ({
     "priority",
     "inPool",
     "hasReport",
-    // open date keys:
     "date",
     "dateFrom",
     "dateTo",
-    // export only:
     "reportType",
   ];
 
-  // Live websocket refresh
-  useComplaintReportsLive(async (wsData) => {
-    if (!wsData || !wsData.complaintId) return;
-
-    // Check if the complaint is visible in the current groups
-    const isVisible = groups.some((group) =>
-      (group.complaints || []).some((c) => c.complaintId === wsData.complaintId)
-    );
-
-    if (wsData.action === "created") {
-      try {
-        // Fetch the new complaint by complaintId
-        const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
-          params: { complaintId: wsData.complaintId },
-          withCredentials: true,
-        });
-        const newComplaint = res.data;
-        setGroups((prevGroups) => {
-          const groupKey = `${newComplaint.bankName}|${newComplaint.branchCode}|${newComplaint.branchName}`;
-          let found = false;
-          const newGroups = prevGroups.map((group) => {
-            const gKey = `${group.bankName}|${group.branchCode}|${group.branchName}`;
-            if (gKey === groupKey) {
-              found = true;
-              return {
-                ...group,
-                complaints: [newComplaint, ...(group.complaints || [])],
-              };
-            }
-            return group;
-          });
-          if (!found) {
-            // If the group doesn't exist, add it to the top
-            return [
-              {
-                bankName: newComplaint.bankName,
-                branchCode: newComplaint.branchCode,
-                branchName: newComplaint.branchName,
-                complaints: [newComplaint],
-              },
-              ...prevGroups,
-            ];
-          }
-          return newGroups;
-        });
-        fetchDashboardCounts && fetchDashboardCounts();
-      } catch (e) {
-        // fallback to full reload only if needed
-        fetchComplaints();
-        fetchDashboardCounts && fetchDashboardCounts();
-      }
-      return;
-    }
-
-    if (!isVisible) return;
-
-    try {
-      // Fetch the updated complaint by complaintId
-      const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
-        params: { complaintId: wsData.complaintId },
-        withCredentials: true,
-      });
-      const updatedComplaint = res.data;
-      console.log("Updated complaint:", updatedComplaint.courierStatus);
-      setGroups((prevGroups) =>
-        prevGroups.map((group) => ({
-          ...group,
-          complaints: (group.complaints || []).map((c) =>
-            c.complaintId === wsData.complaintId ? updatedComplaint : c
-          ),
-        }))
-      );
-
-      fetchDashboardCounts && fetchDashboardCounts();
-    } catch {
-      // fallback to full refresh only if needed
-      // fetchComplaints();
-    }
-  });
-
-  // Fetch complaints (with filters)
-  const fetchComplaints = async () => {
+  const fetchComplaints = useCallback(async () => {
     setLoading(true);
-    setProgress(0); // reset loader percentage
+    setProgress(0);
 
-    // simulate progress increase until 90%
     let interval = setInterval(() => {
       setProgress((prev) => (prev < 90 ? prev + 10 : prev));
     }, 300);
 
     try {
-      // Use shared filters (whitelisted) + local status
       const shared = pick(globalFilters, OPEN_ALLOWED_KEYS);
-      const { reportType, ...filtersForApi } = shared; // don't send reportType to list API
+      const { reportType, ...filtersForApi } = shared;
 
       const params = {
         page: currentPage,
         size: pageSize,
-        status, // ⬅️ force local status
+        status,
         ...filtersForApi,
         hasReport: shared.hasReport ? true : undefined,
       };
 
-      // Remove empty/undefined
       Object.keys(params).forEach(
         (key) =>
           (params[key] === undefined || params[key] === "") && delete params[key]
       );
 
-      const res = await axios.get(`${API_BASE_URL}/complaints/paginated-by-status`, {
-        params,
-        withCredentials: true,
-      });
+      const res = await axios.get(
+        `${API_BASE_URL}/complaints/paginated-by-status`,
+        {
+          params,
+          withCredentials: true,
+        }
+      );
 
-      // Defensive: sort each group's complaints by date (latest first)
       const nextGroups = Array.isArray(res.data.content)
         ? res.data.content.map((group) => ({
             ...group,
@@ -256,27 +205,113 @@ const OpenComplaintsTable = ({
       setTotalPages(res.data.totalPages || 1);
       setTotalRecords(res.data.totalElements || 0);
 
-      // NEW: read backend header for continuous S.No offset
       const beforePageHeader =
         res.headers?.["x-complaints-before-page"] ??
         res.headers?.["X-Complaints-Before-Page"];
       setComplaintsBeforePage(Number.parseInt(beforePageHeader, 10) || 0);
 
-      // complete progress
       setProgress(100);
     } catch (err) {
+      console.error("Fetch complaints error:", err);
       setGroups([]);
       setTotalPages(1);
       setTotalRecords(0);
-      setComplaintsBeforePage(0); // reset offset on error
-      setProgress(100); // still show 100% if error
+      setComplaintsBeforePage(0);
+      setProgress(100);
     } finally {
       clearInterval(interval);
-      setTimeout(() => setLoading(false), 500); // short delay to let 100% show
+      setTimeout(() => setLoading(false), 500);
     }
-  };
+  }, [API_BASE_URL, currentPage, globalFilters, status]);
 
-  // Fetch remarks counts for all complaints in current groups
+  const fetchSingleComplaintAndUpdate = useCallback(
+    async (complaintId) => {
+      try {
+        const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
+          params: { complaintId },
+          withCredentials: true,
+        });
+
+        const updatedComplaint = res.data;
+
+        console.log("Updated complaint object:", updatedComplaint);
+        console.log(
+          "Updated complaint courierStatus:",
+          updatedComplaint?.courierStatus
+        );
+
+        if (!updatedComplaint) return;
+
+        setGroups((prevGroups) => {
+          const belongsInOpenTable =
+            updatedComplaint.complaintStatus === "Open";
+
+          return prevGroups
+            .map((group) => {
+              const hasComplaint = (group.complaints || []).some(
+                (c) => c.complaintId === complaintId
+              );
+
+              if (!hasComplaint) return group;
+
+              let updatedComplaints;
+
+              if (belongsInOpenTable) {
+                updatedComplaints = (group.complaints || []).map((c) =>
+                  c.complaintId === complaintId
+                    ? { ...c, ...updatedComplaint }
+                    : c
+                );
+              } else {
+                updatedComplaints = (group.complaints || []).filter(
+                  (c) => c.complaintId !== complaintId
+                );
+              }
+
+              return {
+                ...group,
+                complaints: updatedComplaints,
+              };
+            })
+            .filter((group) => (group.complaints || []).length > 0);
+        });
+
+        setReportAvailability((prev) => {
+          if (!updatedComplaint?.complaintId) return prev;
+          return {
+            ...prev,
+            [updatedComplaint.complaintId]:
+              prev[updatedComplaint.complaintId] ?? false,
+          };
+        });
+
+        fetchDashboardCounts && fetchDashboardCounts();
+      } catch (err) {
+        console.error("Failed to fetch updated complaint:", err);
+      }
+    },
+    [API_BASE_URL, fetchDashboardCounts]
+  );
+
+  useComplaintReportsLive(
+    useCallback(
+      (wsData) => {
+        if (!wsData?.complaintId) return;
+
+        const isVisible = groupsRef.current.some((group) =>
+          (group.complaints || []).some(
+            (c) => c.complaintId === wsData.complaintId
+          )
+        );
+
+        if (!isVisible) return;
+
+        fetchSingleComplaintAndUpdate(wsData.complaintId);
+      },
+      [fetchSingleComplaintAndUpdate]
+    )
+  );
+
   useEffect(() => {
     const idsToFetch = allComplaintsFlat
       .map((c) => c.id)
@@ -290,23 +325,20 @@ const OpenComplaintsTable = ({
         .then((res) => {
           setRemarksCounts((prev) => ({ ...prev, ...res.data }));
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error("Remarks count fetch error:", err);
+        });
     }
-    // eslint-disable-next-line
-  }, [groups]);
+  }, [groups, allComplaintsFlat, remarksCounts, API_BASE_URL]);
 
-  // Fetch complaints when filters/page/refresh change
   useEffect(() => {
     fetchComplaints();
-    // eslint-disable-next-line
-  }, [globalFilters, status, currentPage, complaintsRefreshKey]);
+  }, [fetchComplaints, complaintsRefreshKey]);
 
-  // Reset to page 0 when filters change
   useEffect(() => {
     setCurrentPage(0);
   }, [globalFilters]);
 
-  // Fetch report availability for all visible complaints
   useEffect(() => {
     const visibleComplaintIds = allComplaintsFlat
       .map((c) => c.complaintId)
@@ -322,49 +354,52 @@ const OpenComplaintsTable = ({
         .then((response) => {
           setReportAvailability((prev) => ({ ...prev, ...response.data }));
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error("Report availability fetch error:", err);
+        });
     }
-    // eslint-disable-next-line
-  }, [groups]);
+  }, [groups, allComplaintsFlat, reportAvailability, API_BASE_URL]);
 
-  // Fetch dropdown options from backend on mount
   useEffect(() => {
     axios
       .get(`${API_BASE_URL}/data/banks`, { withCredentials: true })
       .then((res) => setBankList(res.data))
       .catch(() => setBankList([]));
+
     axios
       .get(`${API_BASE_URL}/data/cities`, { withCredentials: true })
       .then((res) => setCityList(res.data))
       .catch(() => setCityList([]));
+
     axios
       .get(`${API_BASE_URL}/data/statuses`, { withCredentials: true })
       .then((res) => setStatusList(res.data))
       .catch(() => setStatusList([]));
+
     axios
       .get(`${API_BASE_URL}/data/visitors`, { withCredentials: true })
       .then((res) => setEngineers(res.data))
       .catch(() => setEngineers([]));
   }, [API_BASE_URL]);
 
-  // Clear filters: reset shared filters (status stays local)
   const handleClearFilters = () => {
     setFilters(defaultFilters);
   };
 
-  // Export helpers
-  const EXPORT_PAGE_SIZE = 1000; // bigger chunk size for export
-  const EXPORT_BATCH_SIZE = 3;   // safe parallel requests per batch
+  const EXPORT_PAGE_SIZE = 1000;
+  const EXPORT_BATCH_SIZE = 3;
 
   const fetchAllComplaintsForExport = async () => {
     const shared = pick(globalFilters, OPEN_ALLOWED_KEYS);
     const { reportType, ...filtersForApi } = shared;
 
-    // 1) First page request to get totalPages + initial data
-    const firstRes = await axios.get(`${API_BASE_URL}/complaints/paginated-by-status`, {
-      params: { ...filtersForApi, status, page: 0, size: EXPORT_PAGE_SIZE },
-      withCredentials: true,
-    });
+    const firstRes = await axios.get(
+      `${API_BASE_URL}/complaints/paginated-by-status`,
+      {
+        params: { ...filtersForApi, status, page: 0, size: EXPORT_PAGE_SIZE },
+        withCredentials: true,
+      }
+    );
 
     let allFetched = Array.isArray(firstRes.data?.content)
       ? firstRes.data.content.flatMap((g) => g.complaints || [])
@@ -373,7 +408,6 @@ const OpenComplaintsTable = ({
     const totalPages = firstRes.data?.totalPages || 1;
     if (totalPages <= 1) return allFetched;
 
-    // 2) Remaining pages fetched in parallel batches
     const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 1);
 
     for (let i = 0; i < pages.length; i += EXPORT_BATCH_SIZE) {
@@ -382,7 +416,12 @@ const OpenComplaintsTable = ({
       const responses = await Promise.all(
         slice.map((p) =>
           axios.get(`${API_BASE_URL}/complaints/paginated-by-status`, {
-            params: { ...filtersForApi, status, page: p, size: EXPORT_PAGE_SIZE },
+            params: {
+              ...filtersForApi,
+              status,
+              page: p,
+              size: EXPORT_PAGE_SIZE,
+            },
             withCredentials: true,
           })
         )
@@ -420,10 +459,12 @@ const OpenComplaintsTable = ({
           credentials: "include",
         }),
       ]);
+
       if (!summaryResp.ok || !hardwareResp.ok || !engineerResp.ok) {
         alert("Failed to fetch one or more report sections!");
         return;
       }
+
       const summaryData = await summaryResp.json();
       const hardwareData = await hardwareResp.json();
       const engineerData = await engineerResp.json();
@@ -435,19 +476,19 @@ const OpenComplaintsTable = ({
       setLoading(true);
       const allComplaints = await fetchAllComplaintsForExport();
 
-      // ⬅️ Exclude "Wait For Approval" complaints
       const filteredComplaints = allComplaints.filter(
         (c) => c.complaintStatus !== "Wait For Approval"
       );
 
       await generateExcelReport(
         filteredComplaints,
-        status, // ⬅️ sheet/status label
+        status,
         API_BASE_URL,
         uniqueCities,
         filtersToUse.reportType
       );
     } catch (err) {
+      console.error("Export error:", err);
       alert("Failed to fetch all data for export.");
     } finally {
       setLoading(false);
@@ -504,8 +545,19 @@ const OpenComplaintsTable = ({
         { isPriority: newPriority },
         { withCredentials: true }
       );
-      fetchComplaints();
-    } catch (error) {}
+
+      // update only local state for this complaint
+      setGroups((prevGroups) =>
+        prevGroups.map((group) => ({
+          ...group,
+          complaints: (group.complaints || []).map((c) =>
+            c.id === complaint.id ? { ...c, priority: newPriority } : c
+          ),
+        }))
+      );
+    } catch (error) {
+      console.error("Toggle priority error:", error);
+    }
   };
 
   const toggleInPool = async (complaint) => {
@@ -516,19 +568,30 @@ const OpenComplaintsTable = ({
         { markedInPool: newMarkedInPool },
         { withCredentials: true }
       );
-      fetchComplaints();
-    } catch (error) {}
+
+      // update only local state for this complaint
+      setGroups((prevGroups) =>
+        prevGroups.map((group) => ({
+          ...group,
+          complaints: (group.complaints || []).map((c) =>
+            c.id === complaint.id
+              ? { ...c, markedInPool: newMarkedInPool }
+              : c
+          ),
+        }))
+      );
+    } catch (error) {
+      console.error("Toggle in-pool error:", error);
+    }
   };
 
-  // S.No. offset comes from backend (continuous across pages)
   let serialCounter = complaintsBeforePage;
 
   return (
     <div>
-      {/* FILTERS BAR */}
       <ComplaintFilters
-        filters={globalFilters}          // ⬅️ shared filters
-        onFiltersChange={setFilters}     // ⬅️ update shared filters
+        filters={globalFilters}
+        onFiltersChange={setFilters}
         banks={bankList}
         cities={cityList}
         statuses={statusList}
@@ -545,7 +608,6 @@ const OpenComplaintsTable = ({
         }}
       />
 
-      {/* Complaint Table */}
       {selectedComplaintId ? (
         <div>
           <button onClick={handleBackToTable} className="back-button">
@@ -590,7 +652,6 @@ const OpenComplaintsTable = ({
                   <React.Fragment
                     key={group.bankName + group.branchCode + groupIdx}
                   >
-                    {/* Group Header Row */}
                     <tr className="group-header-row">
                       <td
                         className="group-header-row-data"
@@ -610,6 +671,7 @@ const OpenComplaintsTable = ({
                         <span>Branch Name: {group.branchName}</span>
                       </td>
                     </tr>
+
                     {(group.complaints || []).map((complaint) => {
                       serialCounter++;
                       return (
@@ -623,6 +685,7 @@ const OpenComplaintsTable = ({
                           `}
                         >
                           <td>{serialCounter}</td>
+
                           <td
                             className={getStatusClass(
                               complaint.complaintStatus
@@ -656,6 +719,7 @@ const OpenComplaintsTable = ({
                                 )}
                             </div>
                           </td>
+
                           <td
                             className={getCourierStatusClass(
                               complaint.courierStatus
@@ -663,6 +727,7 @@ const OpenComplaintsTable = ({
                           >
                             {complaint.courierStatus || "N/A"}
                           </td>
+
                           <td>
                             <button
                               className="update-button"
@@ -673,6 +738,7 @@ const OpenComplaintsTable = ({
                             >
                               Update
                             </button>
+
                             <button
                               className={`priority-button ${
                                 complaint.priority ? "priority-active" : ""
@@ -697,6 +763,7 @@ const OpenComplaintsTable = ({
                                 : "Mark as Priority"}
                             </button>
                           </td>
+
                           {isSpecialCity(complaint.city) ? (
                             <td>
                               <button
@@ -727,6 +794,7 @@ const OpenComplaintsTable = ({
                           ) : (
                             <td />
                           )}
+
                           <td>
                             <button
                               className={`remark-button ${
@@ -789,6 +857,7 @@ const OpenComplaintsTable = ({
                               </button>
                             )}
                           </td>
+
                           <td>{complaint.date}</td>
                           <td>{complaint.bankName}</td>
                           <td>{complaint.branchCode}</td>
@@ -808,6 +877,7 @@ const OpenComplaintsTable = ({
                           <td>{calculateAgingDays(complaint.date)}</td>
                           <td>{complaint.scheduleDate || "N/A"}</td>
                           <td>{complaint.complaintId}</td>
+
                           <td>
                             <button
                               className="view-history-button"
@@ -834,7 +904,6 @@ const OpenComplaintsTable = ({
             </tbody>
           </table>
 
-          {/* Pagination */}
           {totalPages > 1 && (
             <div className="pagination-container">
               <button
@@ -844,9 +913,11 @@ const OpenComplaintsTable = ({
               >
                 &lt; Previous
               </button>
+
               <span style={{ margin: "0 1em" }}>
                 Page {currentPage + 1} of {totalPages}
               </span>
+
               <button
                 className="page-button"
                 onClick={() => setCurrentPage(currentPage + 1)}
