@@ -102,11 +102,12 @@ const OpenComplaintsTable = ({
     "reportType",
   ];
 // --- Live updates via WebSocket
+// --- Live updates via WebSocket
 useComplaintReportsLive(async (wsData) => {
   if (!wsData || !wsData.complaintId) return;
 
   // Check if the complaint is visible in the current groups
-  const isVisible = branchGroups.some((group) =>
+  const isVisible = groups.some((group) =>
     (group.complaints || []).some((c) => c.complaintId === wsData.complaintId)
   );
 
@@ -118,9 +119,11 @@ useComplaintReportsLive(async (wsData) => {
         withCredentials: true,
       });
       const newComplaint = res.data;
-      setBranchGroups((prevGroups) => {
+
+      setGroups((prevGroups) => {
         const groupKey = `${newComplaint.bankName}|${newComplaint.branchCode}|${newComplaint.branchName}`;
         let found = false;
+
         const newGroups = prevGroups.map((group) => {
           const gKey = `${group.bankName}|${group.branchCode}|${group.branchName}`;
           if (gKey === groupKey) {
@@ -132,8 +135,8 @@ useComplaintReportsLive(async (wsData) => {
           }
           return group;
         });
+
         if (!found) {
-          // If group doesn't exist, add new group to top
           return [
             {
               bankName: newComplaint.bankName,
@@ -144,10 +147,14 @@ useComplaintReportsLive(async (wsData) => {
             ...prevGroups,
           ];
         }
+
         return newGroups;
       });
+
+      fetchDashboardCounts && fetchDashboardCounts();
     } catch {
-      fetchComplaints(); // fallback to full reload only if needed
+      fetchComplaints();
+      fetchDashboardCounts && fetchDashboardCounts();
     }
     return;
   }
@@ -162,7 +169,7 @@ useComplaintReportsLive(async (wsData) => {
     });
     const updatedComplaint = res.data;
 
-    setBranchGroups((prevGroups) =>
+    setGroups((prevGroups) =>
       prevGroups.map((group) => ({
         ...group,
         complaints: (group.complaints || []).map((c) =>
@@ -170,6 +177,8 @@ useComplaintReportsLive(async (wsData) => {
         ),
       }))
     );
+
+    fetchDashboardCounts && fetchDashboardCounts();
   } catch {
     // fallback: fetchComplaints();
   }
