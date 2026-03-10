@@ -14,17 +14,21 @@ import { useFilters } from "../../../context/FiltersContext"; // ✅ shared filt
 // WebSocket auto-refresh hook (kept local as in your file)
 function useComplaintReportsLive(onUpdate) {
   useEffect(() => {
-    const wsUrl = (process.env.REACT_APP_API_BASE_URL || "") + "/ws";
+    const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "";
+    
+    // ✅ Convert http/https to ws/wss — Railway needs native WS, not SockJS
+    const wsUrl = API_BASE_URL
+      .replace(/^https/, "wss")
+      .replace(/^http/, "ws") + "/ws/websocket"; // ← /websocket suffix bypasses SockJS handshake
+
     const client = new Client({
-      // ✅ Force native WebSocket only — skip SockJS HTTP fallback
-      webSocketFactory: () => new SockJS(wsUrl, null, {
-        transports: ["websocket"] // force WS only, no polling fallback
-      }),
-      reconnectDelay: 3000,       // reconnect faster (was 5000)
-      heartbeatIncoming: 10000,   // ✅ keep connection alive every 10s
-      heartbeatOutgoing: 10000,   // ✅ prevents Railway proxy from killing idle connection
-      debug: () => {},
+      webSocketFactory: () => new WebSocket(wsUrl), // ✅ Native WebSocket, no SockJS
+      reconnectDelay: 5000,
+      heartbeatIncoming: 10000,
+      heartbeatOutgoing: 10000,
+      debug: (str) => console.log("[STOMP]", str),
       onConnect: () => {
+        console.log("✅ WS connected");
         client.subscribe("/topic/paginated-by-status", (message) => {
           try {
             const data =
@@ -35,13 +39,10 @@ function useComplaintReportsLive(onUpdate) {
           } catch {}
         });
       },
-      onDisconnect: () => {
-        console.warn("WS disconnected — will auto-reconnect");
-      },
-      onStompError: (frame) => {
-        console.error("STOMP error", frame);
-      },
+      onDisconnect: () => console.warn("WS disconnected"),
+      onStompError: (frame) => console.error("STOMP error", frame),
     });
+
     client.activate();
     return () => client.deactivate();
   }, [onUpdate]);
