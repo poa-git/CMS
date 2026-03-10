@@ -170,10 +170,6 @@ useEffect(() => {
     }
   };
 
-  useComplaintReportsLive(() => {
-    fetchDashboardCounts();
-  });
-
   // -------------------------------------------------------------------------
   // EFFECT: Grab role/username & initial data
   // -------------------------------------------------------------------------
@@ -283,43 +279,49 @@ useEffect(() => {
     e.preventDefault();
     try {
       const updateData = { ...changedFields };
-
+  
       if (
         selectedComplaint?.complaintStatus === "Closed" &&
         !changedFields.closedDate
       ) {
         updateData.closedDate = new Date().toISOString().split("T")[0];
       }
+  
       if (selectedComplaint?.complaintStatus === "Wait For Approval") {
         updateData.quotationDate =
           changedFields.quotationDate ||
           selectedComplaint.quotationDate ||
           new Date().toISOString().split("T")[0];
       }
+  
       if (selectedComplaint?.complaintStatus === "Approved") {
         updateData.approvedDate =
           changedFields.approvedDate ||
           selectedComplaint.approvedDate ||
           new Date().toISOString().split("T")[0];
       }
+  
       if (
         selectedComplaint?.complaintStatus === "Visit Schedule" &&
         data?.scheduleDate
       ) {
         updateData.scheduleDate = formatDateToLocal(data.scheduleDate);
       }
-
-      await axios.put(
+  
+      const response = await axios.put(
         `${API_BASE_URL}/complaints/${selectedComplaint?.id}`,
         updateData,
         { withCredentials: true }
       );
-
+  
+      const updatedComplaint = response.data;
+  
       setComplaints((prev) =>
         prev.map((c) =>
           c.id === selectedComplaint?.id
             ? {
                 ...c,
+                ...updatedComplaint,
                 ...changedFields,
                 complaintStatus: selectedComplaint?.complaintStatus,
                 closedDate:
@@ -354,8 +356,12 @@ useEffect(() => {
             : c
         )
       );
-
+  
       fetchDashboardCounts();
+  
+      // force active complaint table to refresh immediately
+      setComplaintsRefreshKey((k) => k + 1);
+  
       handleCloseModal();
     } catch (err) {
       console.error("Error updating complaint:", err);
