@@ -41,9 +41,16 @@ function useComplaintReportsLive(onUpdate) {
               typeof message.body === "string"
                 ? JSON.parse(message.body)
                 : message.body;
-            // ✅ Always call the LATEST version of onUpdate via ref — no stale closure
+            
+            // ✅ ADD THESE DEBUG LINES
+            console.log("📨 WS message received:", data);
+            console.log("📋 Current groups count:", groups.length); // check if stale
+            console.log("🔍 Looking for complaintId:", data?.complaintId);
+            
             if (onUpdateRef.current) onUpdateRef.current(data);
-          } catch {}
+          } catch (e) {
+            console.error("WS parse error:", e);
+          }
         });
       },
       onDisconnect: () => console.warn("WS disconnected — will auto-reconnect"),
