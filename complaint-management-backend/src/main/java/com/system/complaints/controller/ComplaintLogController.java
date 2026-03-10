@@ -3,10 +3,7 @@ package com.system.complaints.controller;
 import com.system.complaints.dto.ComplaintBranchGroupDTO;
 import com.system.complaints.model.ComplaintLog;
 import com.system.complaints.model.RemarksUpdate;
-import com.system.complaints.service.CloudinaryService;
-import com.system.complaints.service.ComplaintLogService;
-import com.system.complaints.service.RemarksUpdateService;
-import com.system.complaints.service.ComplaintHistoryService;
+import com.system.complaints.service.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +43,9 @@ public class ComplaintLogController {
     @Autowired
     private CloudinaryService cloudinaryService;
 
+    @Autowired
+    private GoogleDriveService googleDriveService;
+
     /**
      * Upload a job card for a specific complaint.
      */
@@ -59,7 +59,7 @@ public class ComplaintLogController {
                 return ResponseEntity.badRequest().body("No file selected.");
             }
 
-            String cloudUrl = cloudinaryService.uploadFile(file);
+            String cloudUrl = googleDriveService.uploadFile(file);
             boolean isUpdated = complaintLogService.updateJobCardPath(id, cloudUrl);
 
             if (isUpdated) {

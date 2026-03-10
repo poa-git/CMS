@@ -8,6 +8,7 @@ target/
 # Env / secrets
 .env
 *.env
+src/main/resources/credentials.json
 
 # Logs
 *.log
