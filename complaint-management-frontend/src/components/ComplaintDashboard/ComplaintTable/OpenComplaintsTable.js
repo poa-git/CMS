@@ -44,7 +44,6 @@ function useComplaintReportsLive(onUpdate) {
             
             // ✅ ADD THESE DEBUG LINES
             console.log("📨 WS message received:", data);
-            console.log("📋 Current groups count:", groups.length); // check if stale
             console.log("🔍 Looking for complaintId:", data?.complaintId);
             
             if (onUpdateRef.current) onUpdateRef.current(data);
