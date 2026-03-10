@@ -41,15 +41,9 @@ function useComplaintReportsLive(onUpdate) {
               typeof message.body === "string"
                 ? JSON.parse(message.body)
                 : message.body;
-            
-            // ✅ ADD THESE DEBUG LINES
-            console.log("📨 WS message received:", data);
-            console.log("🔍 Looking for complaintId:", data?.complaintId);
-            
+            // ✅ Always call the LATEST version of onUpdate via ref — no stale closure
             if (onUpdateRef.current) onUpdateRef.current(data);
-          } catch (e) {
-            console.error("WS parse error:", e);
-          }
+          } catch {}
         });
       },
       onDisconnect: () => console.warn("WS disconnected — will auto-reconnect"),
@@ -188,7 +182,7 @@ const OpenComplaintsTable = ({
       return;
     }
 
-    // ✅ Handle update — no isVisible check, always process
+    // ✅ Handle update — targeted single-row patch
     try {
       const res = await axios.get(`${API_BASE_URL}/complaints/by-id`, {
         params: { complaintId: wsData.complaintId },
@@ -202,12 +196,16 @@ const OpenComplaintsTable = ({
             .map((c) =>
               c.complaintId === wsData.complaintId ? updatedComplaint : c
             )
-            // ✅ Remove from list if status changed away from "Open"
-            .filter((c) => c.complaintStatus === "Open");
+            // ✅ Only remove THIS specific updated complaint if it moved to Closed/Approved
+            // Keep ALL other complaints regardless of their status (FOC, Visit Schedule etc. are valid)
+            .filter((c) =>
+              c.complaintId === wsData.complaintId
+                ? c.complaintStatus !== "Closed" && c.complaintStatus !== "Approved"
+                : true
+            );
 
           return { ...group, complaints: updatedComplaints };
         })
-        // ✅ Remove empty groups after filtering
         .filter((group) => (group.complaints || []).length > 0);
 
         return newGroups;
@@ -215,7 +213,7 @@ const OpenComplaintsTable = ({
 
       fetchDashboardCounts && fetchDashboardCounts();
     } catch {
-      // silent fail — don't trigger full refetch
+      // silent fail
     }
   });
 
