@@ -3,18 +3,16 @@ package com.system.complaints.service;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
-import com.google.api.services.drive.DriveScopes;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.Permission;
 import com.google.auth.http.HttpCredentialsAdapter;
-import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.UserCredentials;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.annotation.PostConstruct;
 import java.io.*;
-import java.util.Collections;
 import java.util.List;
 
 @Service
@@ -23,17 +21,24 @@ public class GoogleDriveService {
     @Value("${google.drive.folder-id}")
     private String folderId;
 
-    @Value("${google.drive.credentials-json}")
-    private String credentialsJson;
+    @Value("${google.drive.client-id}")
+    private String clientId;
+
+    @Value("${google.drive.client-secret}")
+    private String clientSecret;
+
+    @Value("${google.drive.refresh-token}")
+    private String refreshToken;
 
     private Drive driveService;
 
     @PostConstruct
     public void init() throws Exception {
-        String credentialsJson = System.getenv("GOOGLE_CREDENTIALS_JSON");
-        GoogleCredentials credentials = GoogleCredentials
-                .fromStream(new ByteArrayInputStream(credentialsJson.getBytes()))
-                .createScoped(Collections.singleton(DriveScopes.DRIVE));
+        UserCredentials credentials = UserCredentials.newBuilder()
+                .setClientId(clientId)
+                .setClientSecret(clientSecret)
+                .setRefreshToken(refreshToken)
+                .build();
 
         driveService = new Drive.Builder(
                 GoogleNetHttpTransport.newTrustedTransport(),
