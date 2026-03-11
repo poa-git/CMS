@@ -23,8 +23,8 @@ public class GoogleDriveService {
     @Value("${google.drive.folder-id}")
     private String folderId;
 
-    @Value("${google.drive.credentials-path}")
-    private String credentialsPath;
+    @Value("${google.drive.credentials-json}")
+    private String credentialsJson;
 
     private Drive driveService;
 
