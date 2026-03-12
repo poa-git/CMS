@@ -1,6 +1,5 @@
 package com.system.complaints.controller;
 
-import com.system.complaints.dto.AssignedHardwareLogDTO;
 import com.system.complaints.model.HardwareLog;
 import com.system.complaints.model.ComplaintLog;
 import com.system.complaints.model.HardwareReport;
@@ -165,20 +164,10 @@ public class HardwareLogController {
 
     // GET /hardware-logs/assigned/{username}
     @GetMapping("/assigned/{username}")
-    public ResponseEntity<Page<AssignedHardwareLogDTO>> getHardwareLogsAssignedToEngineer(
-            @PathVariable String username,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size,
-            @RequestParam(defaultValue = "id") String sortBy,
-            @RequestParam(defaultValue = "desc") String direction
+    public ResponseEntity<List<HardwareLog>> getHardwareLogsAssignedToEngineer(
+            @PathVariable String username
     ) {
-        Sort sort = direction.equalsIgnoreCase("asc")
-                ? Sort.by(sortBy).ascending()
-                : Sort.by(sortBy).descending();
-
-        Pageable pageable = PageRequest.of(page, size, sort);
-        Page<AssignedHardwareLogDTO> logs = hardwareLogService.getAssignedHardwareLogs(username, pageable);
-
+        List<HardwareLog> logs = hardwareLogService.getAllHardwareLogsAssignedTo(username);
         return ResponseEntity.ok(logs);
     }
 
