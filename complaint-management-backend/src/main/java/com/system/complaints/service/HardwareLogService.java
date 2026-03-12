@@ -1,5 +1,6 @@
 package com.system.complaints.service;
 
+import com.system.complaints.dto.AssignedHardwareLogDTO;
 import com.system.complaints.model.ComplaintHistory;
 import com.system.complaints.model.ComplaintLog;
 import com.system.complaints.model.HardwareLog;
@@ -414,8 +415,8 @@ public class HardwareLogService {
         return result;
     }
 
-    public List<HardwareLog> getAllHardwareLogsAssignedTo(String username) {
-        return hardwareLogRepository.findByLabEngineerIgnoreCase(username);
+    public Page<AssignedHardwareLogDTO> getAssignedHardwareLogs(String username, Pageable pageable) {
+        return hardwareLogRepository.findAssignedToEngineer(username, pageable);
     }
 
     public HardwareLog getHardwareLogById(Long id) {

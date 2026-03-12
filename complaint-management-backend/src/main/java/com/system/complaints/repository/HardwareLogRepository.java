@@ -1,10 +1,14 @@
 package com.system.complaints.repository;
 
+import com.system.complaints.dto.AssignedHardwareLogDTO;
 import com.system.complaints.model.ComplaintLog;
 import com.system.complaints.model.HardwareLog;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.Date;
@@ -141,7 +145,36 @@ WHERE hl.complaintLog IN :complaints
     List<Object[]> getAllTrendsPerDate();
 
 
-
+    @Query("""
+    SELECT new com.system.complaints.dto.AssignedHardwareLogDTO(
+        hl.id,
+        hl.done,
+        hl.courierStatus,
+        hl.equipmentDescription,
+        hl.extraHardware,
+        hl.dispatchInwardDate,
+        hl.receivedInwardDate,
+        hl.dispatchOutwardDate,
+        hl.receivedOutwardDate,
+        hl.hOkDate,
+        hl.dispatchCnNumber,
+        hl.receivingCnNumber,
+        hl.labEngineer,
+        null,
+        cl.id,
+        cl.complaintId,
+        cl.complaintStatus,
+        cl.bankName,
+        cl.branchName,
+        cl.branchCode,
+        cl.city,
+        cl.dcGenerated
+    )
+    FROM HardwareLog hl
+    JOIN hl.complaintLog cl
+    WHERE LOWER(hl.labEngineer) = LOWER(:username)
+""")
+    Page<AssignedHardwareLogDTO> findAssignedToEngineer(String username, Pageable pageable);
 
 
 }
